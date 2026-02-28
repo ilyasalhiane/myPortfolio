@@ -1,10 +1,15 @@
 "use client";
 
+import Image from "next/image";
+
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowDown, Cpu, Orbit } from "lucide-react";
 
 const tags = ["Next.js 15", "TypeScript", "Cloud-native", "WebGL-minded", "Cyber-Physical"];
+const PROFILE_PICTURE_URL =
+  "https://media.licdn.com/dms/image/v2/D4E03AQFMQMWyONHZew/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1696337189875?e=1773878400&v=beta&t=tZ740Zcm-DxhCcd8DCF64Gwxxw9f1y8DNO--mw0Aqos";
+
 
 export function Hero() {
   const [cursor, setCursor] = useState({ x: 50, y: 50 });
@@ -99,6 +104,20 @@ export function Hero() {
             className="pointer-events-none absolute h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-400/30 blur-3xl"
             style={{ left: `${cursor.x}%`, top: `${cursor.y}%` }}
           />
+          <div className="absolute right-4 top-4 z-20 w-32 rounded-2xl border border-cyan-300/40 bg-slate-900/60 p-2 shadow-neon backdrop-blur">
+            <div className="overflow-hidden rounded-xl border border-cyan-200/40">
+              <Image
+                src={PROFILE_PICTURE_URL}
+                alt="Ilyas Alhiane profile picture"
+                width={128}
+                height={128}
+                className="h-28 w-full object-cover"
+                priority
+              />
+            </div>
+            <p className="mt-2 text-center text-[10px] uppercase tracking-[0.18em] text-cyan-200">Operator // Ilyas</p>
+          </div>
+
           <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full">
             {nodes.map((node, idx) => {
               const next = nodes[(idx + 3) % nodes.length];
