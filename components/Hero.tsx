@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowDown, Cpu, Orbit } from "lucide-react";
@@ -8,6 +9,7 @@ import { ArrowDown, Cpu, Orbit } from "lucide-react";
 const tags = ["Next.js 15", "TypeScript", "Cloud-native", "WebGL-minded", "Cyber-Physical"];
 const PROFILE_PICTURE_URL =
   "https://media.licdn.com/dms/image/v2/D4E03AQFMQMWyONHZew/profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1696337189875?e=1773878400&v=beta&t=tZ740Zcm-DxhCcd8DCF64Gwxxw9f1y8DNO--mw0Aqos";
+
 
 export function Hero() {
   const [cursor, setCursor] = useState({ x: 50, y: 50 });
@@ -115,6 +117,7 @@ export function Hero() {
             </div>
             <p className="mt-2 text-center text-[10px] uppercase tracking-[0.18em] text-cyan-200">Operator // Ilyas</p>
           </div>
+
           <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full">
             {nodes.map((node, idx) => {
               const next = nodes[(idx + 3) % nodes.length];
