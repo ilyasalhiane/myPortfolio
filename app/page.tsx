@@ -1,25 +1,29 @@
-import { Certifications } from "@/components/Certifications";
 import { Hero } from "@/components/Hero";
-import { TerminalGame } from "@/components/TerminalGame";
+import { TelemetryBackground } from "@/components/effects/TelemetryBackground";
+import { AboutSection } from "@/components/sections/AboutSection";
+import { EducationSection } from "@/components/sections/EducationSection";
+import { ExperienceSection } from "@/components/sections/ExperienceSection";
+import { Footer } from "@/components/sections/Footer";
+import { HighlightsSection } from "@/components/sections/HighlightsSection";
+import { Navbar } from "@/components/sections/Navbar";
+import { SkillsSection } from "@/components/sections/SkillsSection";
+import { ContactSection } from "@/components/sections/ContactSection";
 
 export default function HomePage() {
   return (
-    <main className="relative">
-      <Hero />
-
-      <section id="about" className="px-6 py-14 md:px-10 lg:px-16">
-        <div className="glass mx-auto max-w-6xl rounded-3xl p-8">
-          <h2 className="cyber-line mb-4 w-max text-2xl font-semibold text-white">About</h2>
-          <p className="max-w-4xl text-slate-300">
-            I design and build robust, scalable, and visually immersive software experiences. My work
-            bridges modern product engineering with systems thinking to deliver performant applications
-            across frontend, backend, DevOps, and cloud-native environments.
-          </p>
-        </div>
-      </section>
-
-      <TerminalGame />
-      <Certifications />
-    </main>
+    <>
+      <TelemetryBackground />
+      <Navbar />
+      <main id="main">
+        <Hero />
+        <AboutSection />
+        <ExperienceSection />
+        <SkillsSection />
+        <EducationSection />
+        <HighlightsSection />
+        <ContactSection />
+      </main>
+      <Footer />
+    </>
   );
 }
