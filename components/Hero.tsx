@@ -3,27 +3,42 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowDown, Cpu, Mail, Orbit, Play, Square } from "lucide-react";
+import { AlertTriangle, ArrowDown, CheckCircle2, Cpu, Mail, Orbit, Play, Square } from "lucide-react";
 import { profile } from "@/data/profile";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 
 type NodePoint = { id: number; x: number; y: number };
+type ActionKey = "scale" | "rollback" | "cache";
 
-const ROUND_LENGTH = 6;
-const ROUND_TIME = 20;
+type Scenario = {
+  id: string;
+  service: string;
+  latency: number;
+  errorRate: number;
+  saturation: number;
+  issue: string;
+  bestAction: ActionKey;
+};
 
-function buildSequence(nodes: NodePoint[], length: number): number[] {
-  const ids = [...nodes.map((node) => node.id)];
-  const output: number[] = [];
+const ROUND_TIME = 30;
+const ACTIONS: Record<ActionKey, string> = {
+  scale: "Scale deployment",
+  rollback: "Rollback release",
+  cache: "Enable cache + queue throttling"
+};
+const SCENARIOS: Scenario[] = [
+  { id: "auth-spike", service: "Auth API", latency: 860, errorRate: 1.4, saturation: 94, issue: "CPU saturation from login spike", bestAction: "scale" },
+  { id: "checkout-regression", service: "Checkout Service", latency: 920, errorRate: 8.7, saturation: 58, issue: "Error burst right after deploy", bestAction: "rollback" },
+  { id: "feed-burst", service: "Feed Aggregator", latency: 670, errorRate: 3.2, saturation: 88, issue: "Queue pressure from cache misses", bestAction: "cache" },
+  { id: "search-ramp", service: "Search API", latency: 710, errorRate: 1.1, saturation: 91, issue: "Healthy errors, infra is saturated", bestAction: "scale" },
+  { id: "pricing-release", service: "Pricing Engine", latency: 790, errorRate: 9.4, saturation: 52, issue: "Failure pattern tied to newest release", bestAction: "rollback" },
+  { id: "timeline-fanout", service: "Timeline Worker", latency: 640, errorRate: 2.2, saturation: 86, issue: "Burst traffic with repeated reads", bestAction: "cache" }
+];
 
-  while (output.length < length && ids.length > 0) {
-    const index = Math.floor(Math.random() * ids.length);
-    const [selected] = ids.splice(index, 1);
-    output.push(selected);
-  }
-
-  return output;
+function getScenario(round: number): Scenario {
+  const offset = Math.floor(Math.random() * SCENARIOS.length);
+  return SCENARIOS[(round + offset) % SCENARIOS.length];
 }
 
 export function Hero() {
@@ -31,11 +46,12 @@ export function Hero() {
   const [statusIndex, setStatusIndex] = useState(0);
   const [gameOn, setGameOn] = useState(false);
   const [round, setRound] = useState(0);
-  const [sequence, setSequence] = useState<number[]>([]);
-  const [step, setStep] = useState(0);
+  const [scenario, setScenario] = useState<Scenario | null>(null);
   const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [best, setBest] = useState(0);
   const [timeLeft, setTimeLeft] = useState(ROUND_TIME);
+  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
   const reduceMotion = useReducedMotion();
 
   const nodes = useMemo<NodePoint[]>(
@@ -57,10 +73,11 @@ export function Hero() {
 
   useEffect(() => {
     if (!gameOn) return;
-    setSequence(buildSequence(nodes, ROUND_LENGTH));
-    setStep(0);
+    setScenario(getScenario(round));
+    setFeedback(null);
     setTimeLeft(ROUND_TIME);
-  }, [gameOn, nodes, round]);
+    setStreak(0);
+  }, [gameOn, round]);
 
   useEffect(() => {
     if (!gameOn) return;
@@ -71,7 +88,7 @@ export function Hero() {
           setBest((currentBest) => Math.max(currentBest, score));
           setScore(0);
           setRound((current) => current + 1);
-          return 0;
+          return ROUND_TIME;
         }
 
         return prev - 1;
@@ -81,7 +98,7 @@ export function Hero() {
     return () => window.clearInterval(intervalId);
   }, [gameOn, score]);
 
-  const currentTarget = sequence[step];
+  const highlightedNode = gameOn && scenario ? nodes.find((node) => node.id === scenario.service.length % nodes.length)?.id : null;
 
   const toggleGame = () => {
     setGameOn((prev) => {
@@ -89,33 +106,31 @@ export function Hero() {
       if (next) {
         setRound((value) => value + 1);
       } else {
-        setStep(0);
-        setSequence([]);
+        setScenario(null);
         setTimeLeft(ROUND_TIME);
+        setStreak(0);
+        setFeedback(null);
       }
       return next;
     });
   };
 
-  const onNodeClick = (nodeId: number) => {
-    if (!gameOn || timeLeft <= 0) return;
+  const onActionSelect = (action: ActionKey) => {
+    if (!gameOn || !scenario) return;
 
-    if (nodeId === currentTarget) {
-      const nextStep = step + 1;
-
-      if (nextStep >= sequence.length) {
-        const nextScore = score + 1;
-        setScore(nextScore);
-        setBest((prev) => Math.max(prev, nextScore));
-        setRound((value) => value + 1);
-      } else {
-        setStep(nextStep);
-      }
+    if (action === scenario.bestAction) {
+      const nextScore = score + 1;
+      setScore(nextScore);
+      setStreak((prev) => prev + 1);
+      setBest((prev) => Math.max(prev, nextScore));
+      setFeedback("correct");
+      setRound((value) => value + 1);
       return;
     }
 
-    setStep(0);
-    setTimeLeft((prev) => Math.max(0, prev - 2));
+    setStreak(0);
+    setFeedback("wrong");
+    setTimeLeft((prev) => Math.max(0, prev - 3));
   };
 
   return (
@@ -169,9 +184,9 @@ export function Hero() {
             className="pointer-events-none absolute h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-400/30 blur-3xl"
             style={{ left: `${cursor.x}%`, top: `${cursor.y}%` }}
           />
-          <div className="absolute right-4 top-4 z-20 w-32 rounded-2xl border border-cyan-300/40 bg-slate-900/60 p-2 shadow-neon">
+          <div className="absolute right-5 top-5 z-20 w-36 rounded-2xl border border-cyan-300/40 bg-slate-900/65 p-2 shadow-neon backdrop-blur-sm">
             <div className="overflow-hidden rounded-xl border border-cyan-200/40">
-              <Image src={profile.profileImage} alt="Ilyas Alhiane profile picture" width={128} height={128} className="h-28 w-full object-cover" priority />
+              <Image src={profile.profileImage} alt="Ilyas Alhiane profile picture" width={144} height={144} className="h-32 w-full object-cover" priority />
             </div>
             <p className="mt-2 text-center text-[10px] uppercase tracking-[0.16em] text-cyan-200">Operator // Ilyas</p>
           </div>
@@ -195,21 +210,18 @@ export function Hero() {
               );
             })}
             {nodes.map((node, idx) => {
-              const isTarget = gameOn && node.id === currentTarget;
-              const isCompleted = gameOn && sequence.slice(0, step).includes(node.id);
-              const fillColor = isTarget ? "#00f0ff" : isCompleted ? "#7affd9" : "#00ffaa";
-              const baseRadius = isTarget ? 1.6 : isCompleted ? 1.15 : 0.85;
+              const isTarget = gameOn && node.id === highlightedNode;
+              const fillColor = isTarget ? "#00f0ff" : "#00ffaa";
+              const baseRadius = isTarget ? 1.55 : 0.85;
 
               return (
                 <g key={`node-${node.id}`}>
                   <motion.circle
                     cx={node.x}
                     cy={node.y}
-                    r={3.2}
+                    r={3.4}
                     fill="transparent"
-                    className={gameOn ? "cursor-pointer" : "pointer-events-none"}
-                    onClick={() => onNodeClick(node.id)}
-                    style={{ pointerEvents: gameOn ? "auto" : "none" }}
+                    className="pointer-events-none"
                   />
                   <motion.circle
                     cx={node.x}
@@ -221,7 +233,7 @@ export function Hero() {
                         ? { opacity: 0.85 }
                         : {
                             r: isTarget ? [baseRadius, baseRadius + 0.55, baseRadius] : [baseRadius, baseRadius + 0.35, baseRadius],
-                            opacity: isTarget ? [0.7, 1, 0.7] : [0.45, 0.95, 0.45]
+                            opacity: isTarget ? [0.78, 1, 0.78] : [0.45, 0.95, 0.45]
                           }
                     }
                     transition={{ duration: isTarget ? 1 : 2.2, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.05 }}
@@ -234,7 +246,7 @@ export function Hero() {
           <div className="absolute bottom-4 left-4 right-4 space-y-2 rounded-xl border border-slate-700/70 bg-slate-900/50 px-4 py-3 text-xs text-slate-200">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-2">
-                <Orbit className="h-4 w-4 text-cyan-300" /> Realtime node telemetry
+                <Orbit className="h-4 w-4 text-cyan-300" /> Cluster Operations Console
               </span>
               <button
                 type="button"
@@ -247,11 +259,34 @@ export function Hero() {
             </div>
 
             {gameOn ? (
-              <div className="space-y-1 text-[11px] text-cyan-100">
-                <p>Click highlighted nodes in order.</p>
-                <p>
-                  Step: {Math.min(step + 1, sequence.length || ROUND_LENGTH)}/{sequence.length || ROUND_LENGTH} · Time: {timeLeft}s · Score: {score} · Best: {best}
-                </p>
+              <div className="space-y-2 text-[11px] text-cyan-100">
+                <p>Mini-game: triage production incidents fast and pick the best engineering action.</p>
+                {scenario && (
+                  <div className="rounded-lg border border-cyan-400/30 bg-slate-950/50 p-2">
+                    <p className="font-medium text-cyan-200">{scenario.service}</p>
+                    <p className="text-slate-300">{scenario.issue}</p>
+                    <p className="mt-1 text-[10px] text-slate-400">p95: {scenario.latency}ms · errors: {scenario.errorRate}% · saturation: {scenario.saturation}%</p>
+                  </div>
+                )}
+                <div className="grid gap-1 sm:grid-cols-3">
+                  {(Object.keys(ACTIONS) as ActionKey[]).map((action) => (
+                    <button
+                      key={action}
+                      type="button"
+                      onClick={() => onActionSelect(action)}
+                      className="rounded-md border border-cyan-300/40 bg-cyan-500/5 px-2 py-1 text-left text-[10px] transition hover:border-cyan-200 hover:bg-cyan-500/15"
+                    >
+                      {ACTIONS[action]}
+                    </button>
+                  ))}
+                </div>
+                <p>Time: {timeLeft}s · Score: {score} · Streak: {streak} · Best: {best}</p>
+                {feedback === "correct" && (
+                  <p className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Correct call. Next incident...</p>
+                )}
+                {feedback === "wrong" && (
+                  <p className="inline-flex items-center gap-1 text-amber-300"><AlertTriangle className="h-3.5 w-3.5" /> Suboptimal decision. -3s penalty.</p>
+                )}
               </div>
             ) : (
               <p className="text-[11px] text-cyan-100">{profile.statusMessages[statusIndex]}</p>
