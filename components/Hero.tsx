@@ -3,55 +3,44 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { AlertTriangle, ArrowDown, CheckCircle2, Cpu, Mail, Orbit, Play, Square } from "lucide-react";
+import { ArrowDown, Cpu, Mail, Orbit, Play, RotateCcw, Square } from "lucide-react";
 import { profile } from "@/data/profile";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 
 type NodePoint = { id: number; x: number; y: number };
-type ActionKey = "scale" | "rollback" | "cache";
+type GamePhase = "idle" | "playback" | "input" | "end";
 
-type Scenario = {
-  id: string;
-  service: string;
-  latency: number;
-  errorRate: number;
-  saturation: number;
-  issue: string;
-  bestAction: ActionKey;
-};
+const INITIAL_LENGTH = 3;
+const STORAGE_KEY = "signal-recall-best";
 
-const ROUND_TIME = 30;
-const ACTIONS: Record<ActionKey, string> = {
-  scale: "Scale deployment",
-  rollback: "Rollback release",
-  cache: "Enable cache + queue throttling"
-};
-const SCENARIOS: Scenario[] = [
-  { id: "auth-spike", service: "Auth API", latency: 860, errorRate: 1.4, saturation: 94, issue: "CPU saturation from login spike", bestAction: "scale" },
-  { id: "checkout-regression", service: "Checkout Service", latency: 920, errorRate: 8.7, saturation: 58, issue: "Error burst right after deploy", bestAction: "rollback" },
-  { id: "feed-burst", service: "Feed Aggregator", latency: 670, errorRate: 3.2, saturation: 88, issue: "Queue pressure from cache misses", bestAction: "cache" },
-  { id: "search-ramp", service: "Search API", latency: 710, errorRate: 1.1, saturation: 91, issue: "Healthy errors, infra is saturated", bestAction: "scale" },
-  { id: "pricing-release", service: "Pricing Engine", latency: 790, errorRate: 9.4, saturation: 52, issue: "Failure pattern tied to newest release", bestAction: "rollback" },
-  { id: "timeline-fanout", service: "Timeline Worker", latency: 640, errorRate: 2.2, saturation: 86, issue: "Burst traffic with repeated reads", bestAction: "cache" }
-];
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
-function getScenario(round: number): Scenario {
-  const offset = Math.floor(Math.random() * SCENARIOS.length);
-  return SCENARIOS[(round + offset) % SCENARIOS.length];
+function randomNodeId(total: number) {
+  return Math.floor(Math.random() * total);
+}
+
+function createSequence(length: number, totalNodes: number) {
+  return Array.from({ length }, () => randomNodeId(totalNodes));
 }
 
 export function Hero() {
   const [cursor, setCursor] = useState({ x: 50, y: 50 });
   const [statusIndex, setStatusIndex] = useState(0);
+
   const [gameOn, setGameOn] = useState(false);
-  const [round, setRound] = useState(0);
-  const [scenario, setScenario] = useState<Scenario | null>(null);
+  const [phase, setPhase] = useState<GamePhase>("idle");
+  const [sequence, setSequence] = useState<number[]>([]);
+  const [inputIndex, setInputIndex] = useState(0);
+  const [level, setLevel] = useState(INITIAL_LENGTH);
   const [score, setScore] = useState(0);
-  const [streak, setStreak] = useState(0);
   const [best, setBest] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(ROUND_TIME);
-  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+  const [activePlaybackNode, setActivePlaybackNode] = useState<number | null>(null);
+
   const reduceMotion = useReducedMotion();
 
   const nodes = useMemo<NodePoint[]>(
@@ -72,65 +61,114 @@ export function Hero() {
   }, []);
 
   useEffect(() => {
-    if (!gameOn) return;
-    setScenario(getScenario(round));
-    setFeedback(null);
-    setTimeLeft(ROUND_TIME);
-    setStreak(0);
-  }, [gameOn, round]);
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isNaN(parsed)) {
+      setBest(parsed);
+    }
+  }, []);
 
-  useEffect(() => {
-    if (!gameOn) return;
+  const persistBest = (nextBest: number) => {
+    setBest(nextBest);
+    window.localStorage.setItem(STORAGE_KEY, String(nextBest));
+  };
 
-    const intervalId = window.setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          setBest((currentBest) => Math.max(currentBest, score));
-          setScore(0);
-          setRound((current) => current + 1);
-          return ROUND_TIME;
-        }
-
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(intervalId);
-  }, [gameOn, score]);
-
-  const highlightedNode = gameOn && scenario ? nodes.find((node) => node.id === scenario.service.length % nodes.length)?.id : null;
+  const startNewRun = () => {
+    const initial = createSequence(INITIAL_LENGTH, nodes.length);
+    setSequence(initial);
+    setInputIndex(0);
+    setLevel(INITIAL_LENGTH);
+    setScore(0);
+    setActivePlaybackNode(null);
+    setPhase("playback");
+  };
 
   const toggleGame = () => {
     setGameOn((prev) => {
       const next = !prev;
       if (next) {
-        setRound((value) => value + 1);
+        startNewRun();
       } else {
-        setScenario(null);
-        setTimeLeft(ROUND_TIME);
-        setStreak(0);
-        setFeedback(null);
+        setPhase("idle");
+        setSequence([]);
+        setInputIndex(0);
+        setLevel(INITIAL_LENGTH);
+        setScore(0);
+        setActivePlaybackNode(null);
       }
       return next;
     });
   };
 
-  const onActionSelect = (action: ActionKey) => {
-    if (!gameOn || !scenario) return;
+  useEffect(() => {
+    if (!gameOn || phase !== "playback" || sequence.length === 0) return;
 
-    if (action === scenario.bestAction) {
-      const nextScore = score + 1;
-      setScore(nextScore);
-      setStreak((prev) => prev + 1);
-      setBest((prev) => Math.max(prev, nextScore));
-      setFeedback("correct");
-      setRound((value) => value + 1);
+    let cancelled = false;
+
+    const playSequence = async () => {
+      setInputIndex(0);
+      setActivePlaybackNode(null);
+
+      const onDuration = reduceMotion ? 240 : 450;
+      const offDuration = reduceMotion ? 120 : 200;
+
+      for (const nodeId of sequence) {
+        if (cancelled) return;
+        setActivePlaybackNode(nodeId);
+        await sleep(onDuration);
+        if (cancelled) return;
+        setActivePlaybackNode(null);
+        await sleep(offDuration);
+      }
+
+      if (cancelled) return;
+      setPhase("input");
+    };
+
+    void playSequence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gameOn, phase, reduceMotion, sequence]);
+
+  const finishRun = () => {
+    setPhase("end");
+    setActivePlaybackNode(null);
+    if (score > best) {
+      persistBest(score);
+    }
+  };
+
+  const onNodePointerDown = (nodeId: number) => {
+    if (!gameOn || phase !== "input") return;
+
+    const expected = sequence[inputIndex];
+    if (nodeId !== expected) {
+      finishRun();
       return;
     }
 
-    setStreak(0);
-    setFeedback("wrong");
-    setTimeLeft((prev) => Math.max(0, prev - 3));
+    const nextIndex = inputIndex + 1;
+    if (nextIndex < sequence.length) {
+      setInputIndex(nextIndex);
+      return;
+    }
+
+    const completedLevel = level;
+    const nextScore = completedLevel;
+
+    setScore(nextScore);
+    if (nextScore > best) {
+      persistBest(nextScore);
+    }
+
+    const nextLevel = completedLevel + 1;
+    setLevel(nextLevel);
+    setSequence((prev) => [...prev, randomNodeId(nodes.length)]);
+    setInputIndex(0);
+    setPhase("playback");
   };
 
   return (
@@ -184,6 +222,7 @@ export function Hero() {
             className="pointer-events-none absolute h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-400/30 blur-3xl"
             style={{ left: `${cursor.x}%`, top: `${cursor.y}%` }}
           />
+
           <div className="absolute right-5 top-5 z-20 w-36 rounded-2xl border border-cyan-300/40 bg-slate-900/65 p-2 shadow-neon backdrop-blur-sm">
             <div className="overflow-hidden rounded-xl border border-cyan-200/40">
               <Image src={profile.profileImage} alt="Ilyas Alhiane profile picture" width={144} height={144} className="h-32 w-full object-cover" priority />
@@ -209,19 +248,23 @@ export function Hero() {
                 />
               );
             })}
+
             {nodes.map((node, idx) => {
-              const isTarget = gameOn && node.id === highlightedNode;
-              const fillColor = isTarget ? "#00f0ff" : "#00ffaa";
-              const baseRadius = isTarget ? 1.55 : 0.85;
+              const isPlaybackNode = gameOn && phase === "playback" && node.id === activePlaybackNode;
+              const isExpectedNode = gameOn && phase === "input" && node.id === sequence[inputIndex];
+              const baseRadius = isPlaybackNode ? 1.7 : isExpectedNode ? 1.2 : 0.85;
+              const fillColor = isPlaybackNode ? "#00f0ff" : isExpectedNode ? "#67f3ff" : "#00ffaa";
 
               return (
                 <g key={`node-${node.id}`}>
-                  <motion.circle
+                  <circle
                     cx={node.x}
                     cy={node.y}
-                    r={3.4}
+                    r={3.7}
                     fill="transparent"
-                    className="pointer-events-none"
+                    onPointerDown={() => onNodePointerDown(node.id)}
+                    style={{ pointerEvents: gameOn && phase === "input" ? "auto" : "none" }}
+                    className={gameOn && phase === "input" ? "cursor-pointer" : "pointer-events-none"}
                   />
                   <motion.circle
                     cx={node.x}
@@ -230,13 +273,13 @@ export function Hero() {
                     fill={fillColor}
                     animate={
                       reduceMotion
-                        ? { opacity: 0.85 }
+                        ? { opacity: isPlaybackNode ? 1 : 0.85 }
                         : {
-                            r: isTarget ? [baseRadius, baseRadius + 0.55, baseRadius] : [baseRadius, baseRadius + 0.35, baseRadius],
-                            opacity: isTarget ? [0.78, 1, 0.78] : [0.45, 0.95, 0.45]
+                            r: isPlaybackNode ? [baseRadius, baseRadius + 0.6, baseRadius] : [baseRadius, baseRadius + 0.35, baseRadius],
+                            opacity: isPlaybackNode ? [0.85, 1, 0.85] : [0.45, 0.95, 0.45]
                           }
                     }
-                    transition={{ duration: isTarget ? 1 : 2.2, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.05 }}
+                    transition={{ duration: isPlaybackNode ? 0.7 : 2.1, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.05 }}
                   />
                 </g>
               );
@@ -246,7 +289,7 @@ export function Hero() {
           <div className="absolute bottom-4 left-4 right-4 space-y-2 rounded-xl border border-slate-700/70 bg-slate-900/50 px-4 py-3 text-xs text-slate-200">
             <div className="flex items-center justify-between">
               <span className="inline-flex items-center gap-2">
-                <Orbit className="h-4 w-4 text-cyan-300" /> Cluster Operations Console
+                <Orbit className="h-4 w-4 text-cyan-300" /> Realtime node telemetry
               </span>
               <button
                 type="button"
@@ -258,38 +301,31 @@ export function Hero() {
               </button>
             </div>
 
-            {gameOn ? (
-              <div className="space-y-2 text-[11px] text-cyan-100">
-                <p>Mini-game: triage production incidents fast and pick the best engineering action.</p>
-                {scenario && (
-                  <div className="rounded-lg border border-cyan-400/30 bg-slate-950/50 p-2">
-                    <p className="font-medium text-cyan-200">{scenario.service}</p>
-                    <p className="text-slate-300">{scenario.issue}</p>
-                    <p className="mt-1 text-[10px] text-slate-400">p95: {scenario.latency}ms · errors: {scenario.errorRate}% · saturation: {scenario.saturation}%</p>
+            {!gameOn && <p className="text-[11px] text-cyan-100">{profile.statusMessages[statusIndex]}</p>}
+
+            {gameOn && (
+              <div className="space-y-1 text-[11px] text-cyan-100">
+                <p>Signal Recall: memorize the playback sequence, then repeat it node-by-node.</p>
+                <p>
+                  Phase: {phase} · Level: {level} · Progress: {Math.min(inputIndex + 1, sequence.length)}/{sequence.length} · Score: {score} · Best: {best}
+                </p>
+
+                {phase === "playback" && <p className="text-cyan-200">System playback in progress…</p>}
+                {phase === "input" && <p className="text-cyan-200">Your turn: reproduce the sequence in order.</p>}
+
+                {phase === "end" && (
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <p className="text-rose-200">Run ended on a wrong node. Try again?</p>
+                    <button
+                      type="button"
+                      onClick={startNewRun}
+                      className="inline-flex items-center gap-1 rounded-md border border-cyan-300/50 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" /> Try again
+                    </button>
                   </div>
                 )}
-                <div className="grid gap-1 sm:grid-cols-3">
-                  {(Object.keys(ACTIONS) as ActionKey[]).map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      onClick={() => onActionSelect(action)}
-                      className="rounded-md border border-cyan-300/40 bg-cyan-500/5 px-2 py-1 text-left text-[10px] transition hover:border-cyan-200 hover:bg-cyan-500/15"
-                    >
-                      {ACTIONS[action]}
-                    </button>
-                  ))}
-                </div>
-                <p>Time: {timeLeft}s · Score: {score} · Streak: {streak} · Best: {best}</p>
-                {feedback === "correct" && (
-                  <p className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Correct call. Next incident...</p>
-                )}
-                {feedback === "wrong" && (
-                  <p className="inline-flex items-center gap-1 text-amber-300"><AlertTriangle className="h-3.5 w-3.5" /> Suboptimal decision. -3s penalty.</p>
-                )}
               </div>
-            ) : (
-              <p className="text-[11px] text-cyan-100">{profile.statusMessages[statusIndex]}</p>
             )}
           </div>
         </motion.div>
