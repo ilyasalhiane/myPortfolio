@@ -3,52 +3,56 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowDown, Cpu, Mail, Orbit, Play, RotateCcw, Square } from "lucide-react";
+import { ArrowDown, Cpu, LockKeyhole, Mail, RotateCcw, Square } from "lucide-react";
 import { profile } from "@/data/profile";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 
-type NodePoint = { id: number; x: number; y: number };
-type GamePhase = "idle" | "playback" | "input" | "end";
+type PuzzleState = "idle" | "active" | "unlocked" | "denied";
 
-const INITIAL_LENGTH = 3;
-const STORAGE_KEY = "signal-recall-best";
+type Dot = {
+  id: number;
+  row: number;
+  col: number;
+  x: number;
+  y: number;
+};
 
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
+const PATTERNS = [
+  [1, 2, 5, 8],
+  [1, 4, 7, 8],
+  [3, 6, 5, 2],
+  [7, 5, 3, 6]
+];
+const STORAGE_KEY = "pattern-lock-wins";
 
-function randomNodeId(total: number) {
-  return Math.floor(Math.random() * total);
-}
-
-function createSequence(length: number, totalNodes: number) {
-  return Array.from({ length }, () => randomNodeId(totalNodes));
+function pickPattern() {
+  return PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
 }
 
 export function Hero() {
-  const [cursor, setCursor] = useState({ x: 50, y: 50 });
   const [statusIndex, setStatusIndex] = useState(0);
-
-  const [gameOn, setGameOn] = useState(false);
-  const [phase, setPhase] = useState<GamePhase>("idle");
-  const [sequence, setSequence] = useState<number[]>([]);
-  const [inputIndex, setInputIndex] = useState(0);
-  const [level, setLevel] = useState(INITIAL_LENGTH);
-  const [score, setScore] = useState(0);
-  const [best, setBest] = useState(0);
-  const [activePlaybackNode, setActivePlaybackNode] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [puzzleState, setPuzzleState] = useState<PuzzleState>("idle");
+  const [targetPattern, setTargetPattern] = useState<number[]>(PATTERNS[0]);
+  const [selectedDots, setSelectedDots] = useState<number[]>([]);
+  const [wins, setWins] = useState(0);
 
   const reduceMotion = useReducedMotion();
 
-  const nodes = useMemo<NodePoint[]>(
+  const dots = useMemo<Dot[]>(
     () =>
-      Array.from({ length: 24 }, (_, i) => {
-        const angle = (Math.PI * 2 * i) / 24;
-        const radius = 32 + (i % 3) * 7;
-        return { id: i, x: 50 + Math.cos(angle) * radius, y: 50 + Math.sin(angle) * radius };
+      Array.from({ length: 9 }, (_, index) => {
+        const id = index + 1;
+        const row = Math.floor(index / 3);
+        const col = index % 3;
+        return {
+          id,
+          row,
+          col,
+          x: 20 + col * 30,
+          y: 20 + row * 30
+        };
       }),
     []
   );
@@ -65,111 +69,57 @@ export function Hero() {
     if (!raw) return;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isNaN(parsed)) {
-      setBest(parsed);
+      setWins(parsed);
     }
   }, []);
 
-  const persistBest = (nextBest: number) => {
-    setBest(nextBest);
-    window.localStorage.setItem(STORAGE_KEY, String(nextBest));
+  const persistWins = (nextWins: number) => {
+    setWins(nextWins);
+    window.localStorage.setItem(STORAGE_KEY, String(nextWins));
   };
 
-  const startNewRun = () => {
-    const initial = createSequence(INITIAL_LENGTH, nodes.length);
-    setSequence(initial);
-    setInputIndex(0);
-    setLevel(INITIAL_LENGTH);
-    setScore(0);
-    setActivePlaybackNode(null);
-    setPhase("playback");
+  const startGame = () => {
+    setTargetPattern(pickPattern());
+    setSelectedDots([]);
+    setPuzzleState("active");
+    setPlaying(true);
   };
 
-  const toggleGame = () => {
-    setGameOn((prev) => {
-      const next = !prev;
-      if (next) {
-        startNewRun();
-      } else {
-        setPhase("idle");
-        setSequence([]);
-        setInputIndex(0);
-        setLevel(INITIAL_LENGTH);
-        setScore(0);
-        setActivePlaybackNode(null);
-      }
-      return next;
-    });
+  const exitGame = () => {
+    setPlaying(false);
+    setPuzzleState("idle");
+    setSelectedDots([]);
   };
 
-  useEffect(() => {
-    if (!gameOn || phase !== "playback" || sequence.length === 0) return;
-
-    let cancelled = false;
-
-    const playSequence = async () => {
-      setInputIndex(0);
-      setActivePlaybackNode(null);
-
-      const onDuration = reduceMotion ? 240 : 450;
-      const offDuration = reduceMotion ? 120 : 200;
-
-      for (const nodeId of sequence) {
-        if (cancelled) return;
-        setActivePlaybackNode(nodeId);
-        await sleep(onDuration);
-        if (cancelled) return;
-        setActivePlaybackNode(null);
-        await sleep(offDuration);
-      }
-
-      if (cancelled) return;
-      setPhase("input");
-    };
-
-    void playSequence();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [gameOn, phase, reduceMotion, sequence]);
-
-  const finishRun = () => {
-    setPhase("end");
-    setActivePlaybackNode(null);
-    if (score > best) {
-      persistBest(score);
-    }
+  const resetAttempt = () => {
+    setSelectedDots([]);
+    setPuzzleState("active");
   };
 
-  const onNodePointerDown = (nodeId: number) => {
-    if (!gameOn || phase !== "input") return;
+  const handleDotSelect = (dotId: number) => {
+    if (!playing || puzzleState !== "active") return;
+    if (selectedDots.includes(dotId)) return;
 
-    const expected = sequence[inputIndex];
-    if (nodeId !== expected) {
-      finishRun();
+    const nextSelection = [...selectedDots, dotId];
+    setSelectedDots(nextSelection);
+
+    const currentIndex = nextSelection.length - 1;
+    if (targetPattern[currentIndex] !== dotId) {
+      setPuzzleState("denied");
       return;
     }
 
-    const nextIndex = inputIndex + 1;
-    if (nextIndex < sequence.length) {
-      setInputIndex(nextIndex);
-      return;
+    if (nextSelection.length === targetPattern.length) {
+      setPuzzleState("unlocked");
+      persistWins(wins + 1);
     }
-
-    const completedLevel = level;
-    const nextScore = completedLevel;
-
-    setScore(nextScore);
-    if (nextScore > best) {
-      persistBest(nextScore);
-    }
-
-    const nextLevel = completedLevel + 1;
-    setLevel(nextLevel);
-    setSequence((prev) => [...prev, randomNodeId(nodes.length)]);
-    setInputIndex(0);
-    setPhase("playback");
   };
+
+  const selectedPoints = selectedDots
+    .map((id) => dots.find((dot) => dot.id === id))
+    .filter((dot): dot is Dot => Boolean(dot))
+    .map((dot) => `${dot.x},${dot.y}`)
+    .join(" ");
 
   return (
     <section id="top" className="relative overflow-hidden pb-14 pt-16 md:pt-20">
@@ -183,11 +133,18 @@ export function Hero() {
           >
             <Cpu className="h-4 w-4" /> SYSTEM PROFILE
           </motion.p>
-          <div className="space-y-4">
-            <h1 className="text-3xl font-semibold tracking-tight text-white md:text-5xl">{profile.name}</h1>
-            <p className="text-lg text-cyan-100 md:text-2xl">{profile.title}</p>
-            <p className="text-sm text-slate-300 md:text-base">{profile.subtitle}</p>
+
+          <div className="flex items-center gap-4">
+            <div className="rounded-full border border-cyan-300/60 p-1 shadow-neon">
+              <Image src={profile.profileImage} alt="Ilyas Alhiane profile picture" width={72} height={72} className="h-[72px] w-[72px] rounded-full object-cover" priority />
+            </div>
+            <div className="space-y-1">
+              <h1 className="text-3xl font-semibold tracking-tight text-white md:text-5xl">{profile.name}</h1>
+              <p className="text-lg text-cyan-100 md:text-2xl">{profile.title}</p>
+            </div>
           </div>
+
+          <p className="text-sm text-slate-300 md:text-base">{profile.subtitle}</p>
           <p className="max-w-2xl text-base text-slate-300 md:text-lg">{profile.positioning}</p>
 
           <div className="flex flex-wrap gap-2">
@@ -211,124 +168,114 @@ export function Hero() {
           </div>
         </div>
 
-        <motion.div
-          onMouseMove={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            setCursor({ x: ((event.clientX - rect.left) / rect.width) * 100, y: ((event.clientY - rect.top) / rect.height) * 100 });
-          }}
-          className="glass relative h-[430px] overflow-hidden rounded-3xl"
-        >
-          <div
-            className="pointer-events-none absolute h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-400/30 blur-3xl"
-            style={{ left: `${cursor.x}%`, top: `${cursor.y}%` }}
-          />
+        <div className="glass relative min-h-[430px] overflow-hidden rounded-3xl border border-cyan-400/20 p-6">
+          <div className="absolute -top-16 right-8 h-40 w-40 rounded-full bg-cyan-500/15 blur-3xl" />
 
-          <div className="absolute right-5 top-5 z-20 w-36 rounded-2xl border border-cyan-300/40 bg-slate-900/65 p-2 shadow-neon backdrop-blur-sm">
-            <div className="overflow-hidden rounded-xl border border-cyan-200/40">
-              <Image src={profile.profileImage} alt="Ilyas Alhiane profile picture" width={144} height={144} className="h-32 w-full object-cover" priority />
-            </div>
-            <p className="mt-2 text-center text-[10px] uppercase tracking-[0.16em] text-cyan-200">Operator // Ilyas</p>
-          </div>
+          {!playing && (
+            <div className="relative z-10 flex h-full flex-col justify-between">
+              <div className="space-y-3">
+                <p className="inline-flex items-center gap-2 rounded-full border border-cyan-300/40 bg-cyan-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.14em] text-cyan-200">
+                  <LockKeyhole className="h-3.5 w-3.5" /> System Card
+                </p>
+                <h3 className="text-xl font-semibold text-white">Pattern Lock Console</h3>
+                <p className="text-sm text-slate-300">{profile.statusMessages[statusIndex]}</p>
+                <p className="text-xs text-cyan-100/90">Optional: unlock a hidden highlight.</p>
+              </div>
 
-          <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full">
-            {nodes.map((node, idx) => {
-              const next = nodes[(idx + 3) % nodes.length];
-              return (
-                <motion.line
-                  key={`line-${node.id}`}
-                  x1={node.x}
-                  y1={node.y}
-                  x2={next.x}
-                  y2={next.y}
-                  stroke="rgba(0,240,255,0.32)"
-                  strokeWidth="0.25"
-                  initial={reduceMotion ? false : { pathLength: 0, opacity: 0.3 }}
-                  animate={reduceMotion ? { opacity: 0.35 } : { pathLength: 1, opacity: [0.2, 0.8, 0.2] }}
-                  transition={{ duration: 4, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.09 }}
-                />
-              );
-            })}
-
-            {nodes.map((node, idx) => {
-              const isPlaybackNode = gameOn && phase === "playback" && node.id === activePlaybackNode;
-              const isExpectedNode = gameOn && phase === "input" && node.id === sequence[inputIndex];
-              const baseRadius = isPlaybackNode ? 1.7 : isExpectedNode ? 1.2 : 0.85;
-              const fillColor = isPlaybackNode ? "#00f0ff" : isExpectedNode ? "#67f3ff" : "#00ffaa";
-
-              return (
-                <g key={`node-${node.id}`}>
-                  <circle
-                    cx={node.x}
-                    cy={node.y}
-                    r={3.7}
-                    fill="transparent"
-                    onPointerDown={() => onNodePointerDown(node.id)}
-                    style={{ pointerEvents: gameOn && phase === "input" ? "auto" : "none" }}
-                    className={gameOn && phase === "input" ? "cursor-pointer" : "pointer-events-none"}
-                  />
-                  <motion.circle
-                    cx={node.x}
-                    cy={node.y}
-                    r={baseRadius}
-                    fill={fillColor}
-                    animate={
-                      reduceMotion
-                        ? { opacity: isPlaybackNode ? 1 : 0.85 }
-                        : {
-                            r: isPlaybackNode ? [baseRadius, baseRadius + 0.6, baseRadius] : [baseRadius, baseRadius + 0.35, baseRadius],
-                            opacity: isPlaybackNode ? [0.85, 1, 0.85] : [0.45, 0.95, 0.45]
-                          }
-                    }
-                    transition={{ duration: isPlaybackNode ? 0.7 : 2.1, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.05 }}
-                  />
-                </g>
-              );
-            })}
-          </svg>
-
-          <div className="absolute bottom-4 left-4 right-4 space-y-2 rounded-xl border border-slate-700/70 bg-slate-900/50 px-4 py-3 text-xs text-slate-200">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-2">
-                <Orbit className="h-4 w-4 text-cyan-300" /> Realtime node telemetry
-              </span>
               <button
                 type="button"
-                onClick={toggleGame}
-                className="inline-flex items-center gap-1 rounded-md border border-cyan-300/50 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100"
+                onClick={startGame}
+                className="w-fit rounded-lg border border-cyan-300/60 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-100 transition hover:bg-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
               >
-                {gameOn ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                {gameOn ? "Exit" : "Play"}
+                Play Pattern Lock
               </button>
             </div>
+          )}
 
-            {!gameOn && <p className="text-[11px] text-cyan-100">{profile.statusMessages[statusIndex]}</p>}
-
-            {gameOn && (
-              <div className="space-y-1 text-[11px] text-cyan-100">
-                <p>Signal Recall: memorize the playback sequence, then repeat it node-by-node.</p>
-                <p>
-                  Phase: {phase} · Level: {level} · Progress: {Math.min(inputIndex + 1, sequence.length)}/{sequence.length} · Score: {score} · Best: {best}
-                </p>
-
-                {phase === "playback" && <p className="text-cyan-200">System playback in progress…</p>}
-                {phase === "input" && <p className="text-cyan-200">Your turn: reproduce the sequence in order.</p>}
-
-                {phase === "end" && (
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <p className="text-rose-200">Run ended on a wrong node. Try again?</p>
-                    <button
-                      type="button"
-                      onClick={startNewRun}
-                      className="inline-flex items-center gap-1 rounded-md border border-cyan-300/50 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" /> Try again
-                    </button>
-                  </div>
-                )}
+          {playing && (
+            <div className="relative z-10 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs uppercase tracking-[0.14em] text-cyan-200">Target: {targetPattern.join("-")}</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={resetAttempt}
+                    className="inline-flex items-center gap-1 rounded-md border border-cyan-300/50 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100 transition hover:bg-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" /> Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exitGame}
+                    className="inline-flex items-center gap-1 rounded-md border border-cyan-300/50 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100 transition hover:bg-cyan-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                  >
+                    <Square className="h-3.5 w-3.5" /> Exit
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
-        </motion.div>
+
+              <div className="mx-auto w-full max-w-[280px] rounded-2xl border border-cyan-400/30 bg-slate-900/50 p-4">
+                <svg viewBox="0 0 100 100" className="h-full w-full">
+                  {selectedPoints && <polyline points={selectedPoints} fill="none" stroke="rgba(0,240,255,0.9)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />}
+
+                  {dots.map((dot) => {
+                    const isSelected = selectedDots.includes(dot.id);
+                    const isNextExpected = puzzleState === "active" && targetPattern[selectedDots.length] === dot.id;
+                    const radius = isSelected ? 6 : 4.2;
+                    return (
+                      <g key={dot.id}>
+                        <circle
+                          cx={dot.x}
+                          cy={dot.y}
+                          r={9}
+                          fill="transparent"
+                          onPointerDown={() => handleDotSelect(dot.id)}
+                          style={{ pointerEvents: puzzleState === "active" ? "auto" : "none" }}
+                          className={puzzleState === "active" ? "cursor-pointer" : "pointer-events-none"}
+                        />
+                        <motion.circle
+                          cx={dot.x}
+                          cy={dot.y}
+                          r={radius}
+                          fill={isSelected ? "#00f0ff" : isNextExpected ? "#77f8ff" : "#0f2338"}
+                          stroke={isSelected || isNextExpected ? "#00f0ff" : "rgba(0,240,255,0.4)"}
+                          strokeWidth={isSelected ? 1.6 : 1.2}
+                          animate={
+                            reduceMotion
+                              ? { opacity: isSelected ? 1 : 0.85 }
+                              : isSelected
+                                ? { scale: [1, 1.08, 1], opacity: [0.8, 1, 0.8] }
+                                : { opacity: 0.95 }
+                          }
+                          transition={{ duration: 0.5, repeat: reduceMotion || !isSelected ? 0 : Infinity }}
+                        />
+                        <text x={dot.x} y={dot.y + 1.4} textAnchor="middle" className="fill-cyan-100 text-[4.5px] font-medium">
+                          {dot.id}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+
+              <div className="space-y-1 text-xs text-slate-200">
+                {puzzleState === "active" && <p>Tap dots in order. No duplicate dots allowed per attempt.</p>}
+                {puzzleState === "denied" && <p className="text-rose-300">Access denied. Adjust pattern and try again.</p>}
+                {puzzleState === "unlocked" && (
+                  <motion.div
+                    initial={reduceMotion ? false : { opacity: 0.5, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="rounded-xl border border-emerald-300/50 bg-emerald-500/10 p-3"
+                  >
+                    <p className="font-semibold text-emerald-200">UNLOCKED</p>
+                    <p className="mt-1 text-emerald-100">Cloud-native Microservices • Node/Express • Docker/K8s</p>
+                  </motion.div>
+                )}
+                <p className="text-cyan-100/90">Pattern wins: {wins}</p>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
