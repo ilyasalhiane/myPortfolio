@@ -3,13 +3,20 @@
 import { useRef } from "react";
 import { motion, useMotionTemplate, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { ExternalLink, ShieldCheck } from "lucide-react";
-import { SiCoursera, SiIbm, SiMeta, SiPython } from "react-icons/si";
+import { SiCoursera, SiMeta, SiPython } from "react-icons/si";
+import type { IconType } from "react-icons";
 import { certifications, type Certification } from "@/lib/data";
 import { cn } from "@/lib/utils";
 
+const SiIbmWordmark: IconType = ({ className }) => (
+  <span className={cn("inline-flex items-center rounded border border-cyan-200/70 px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.16em] text-cyan-200", className)}>
+    IBM
+  </span>
+);
+
 const ICON_MAP = {
   meta: SiMeta,
-  ibm: SiIbm,
+  ibm: SiIbmWordmark,
   coursera: SiCoursera,
   python: SiPython
 } as const;

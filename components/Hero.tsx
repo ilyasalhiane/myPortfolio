@@ -3,17 +3,42 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowDown, Cpu, Mail, Orbit } from "lucide-react";
+import { ArrowDown, Cpu, Mail, Orbit, Play, Square } from "lucide-react";
 import { profile } from "@/data/profile";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 
+type NodePoint = { id: number; x: number; y: number };
+
+const ROUND_LENGTH = 6;
+const ROUND_TIME = 20;
+
+function buildSequence(nodes: NodePoint[], length: number): number[] {
+  const ids = [...nodes.map((node) => node.id)];
+  const output: number[] = [];
+
+  while (output.length < length && ids.length > 0) {
+    const index = Math.floor(Math.random() * ids.length);
+    const [selected] = ids.splice(index, 1);
+    output.push(selected);
+  }
+
+  return output;
+}
+
 export function Hero() {
   const [cursor, setCursor] = useState({ x: 50, y: 50 });
   const [statusIndex, setStatusIndex] = useState(0);
+  const [gameOn, setGameOn] = useState(false);
+  const [round, setRound] = useState(0);
+  const [sequence, setSequence] = useState<number[]>([]);
+  const [step, setStep] = useState(0);
+  const [score, setScore] = useState(0);
+  const [best, setBest] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(ROUND_TIME);
   const reduceMotion = useReducedMotion();
 
-  const nodes = useMemo(
+  const nodes = useMemo<NodePoint[]>(
     () =>
       Array.from({ length: 24 }, (_, i) => {
         const angle = (Math.PI * 2 * i) / 24;
@@ -29,6 +54,69 @@ export function Hero() {
     }, 2600);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!gameOn) return;
+    setSequence(buildSequence(nodes, ROUND_LENGTH));
+    setStep(0);
+    setTimeLeft(ROUND_TIME);
+  }, [gameOn, nodes, round]);
+
+  useEffect(() => {
+    if (!gameOn) return;
+
+    const intervalId = window.setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          setBest((currentBest) => Math.max(currentBest, score));
+          setScore(0);
+          setRound((current) => current + 1);
+          return 0;
+        }
+
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [gameOn, score]);
+
+  const currentTarget = sequence[step];
+
+  const toggleGame = () => {
+    setGameOn((prev) => {
+      const next = !prev;
+      if (next) {
+        setRound((value) => value + 1);
+      } else {
+        setStep(0);
+        setSequence([]);
+        setTimeLeft(ROUND_TIME);
+      }
+      return next;
+    });
+  };
+
+  const onNodeClick = (nodeId: number) => {
+    if (!gameOn || timeLeft <= 0) return;
+
+    if (nodeId === currentTarget) {
+      const nextStep = step + 1;
+
+      if (nextStep >= sequence.length) {
+        const nextScore = score + 1;
+        setScore(nextScore);
+        setBest((prev) => Math.max(prev, nextScore));
+        setRound((value) => value + 1);
+      } else {
+        setStep(nextStep);
+      }
+      return;
+    }
+
+    setStep(0);
+    setTimeLeft((prev) => Math.max(0, prev - 2));
+  };
 
   return (
     <section id="top" className="relative overflow-hidden pb-14 pt-16 md:pt-20">
@@ -106,17 +194,41 @@ export function Hero() {
                 />
               );
             })}
-            {nodes.map((node, idx) => (
-              <motion.circle
-                key={`node-${node.id}`}
-                cx={node.x}
-                cy={node.y}
-                r="0.85"
-                fill="#00ffaa"
-                animate={reduceMotion ? { opacity: 0.7 } : { r: [0.8, 1.45, 0.8], opacity: [0.45, 1, 0.45] }}
-                transition={{ duration: 2.2, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.05 }}
-              />
-            ))}
+            {nodes.map((node, idx) => {
+              const isTarget = gameOn && node.id === currentTarget;
+              const isCompleted = gameOn && sequence.slice(0, step).includes(node.id);
+              const fillColor = isTarget ? "#00f0ff" : isCompleted ? "#7affd9" : "#00ffaa";
+              const baseRadius = isTarget ? 1.6 : isCompleted ? 1.15 : 0.85;
+
+              return (
+                <g key={`node-${node.id}`}>
+                  <motion.circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={3.2}
+                    fill="transparent"
+                    className={gameOn ? "cursor-pointer" : "pointer-events-none"}
+                    onClick={() => onNodeClick(node.id)}
+                    style={{ pointerEvents: gameOn ? "auto" : "none" }}
+                  />
+                  <motion.circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={baseRadius}
+                    fill={fillColor}
+                    animate={
+                      reduceMotion
+                        ? { opacity: 0.85 }
+                        : {
+                            r: isTarget ? [baseRadius, baseRadius + 0.55, baseRadius] : [baseRadius, baseRadius + 0.35, baseRadius],
+                            opacity: isTarget ? [0.7, 1, 0.7] : [0.45, 0.95, 0.45]
+                          }
+                    }
+                    transition={{ duration: isTarget ? 1 : 2.2, repeat: reduceMotion ? 0 : Infinity, delay: idx * 0.05 }}
+                  />
+                </g>
+              );
+            })}
           </svg>
 
           <div className="absolute bottom-4 left-4 right-4 space-y-2 rounded-xl border border-slate-700/70 bg-slate-900/50 px-4 py-3 text-xs text-slate-200">
@@ -124,9 +236,26 @@ export function Hero() {
               <span className="inline-flex items-center gap-2">
                 <Orbit className="h-4 w-4 text-cyan-300" /> Realtime node telemetry
               </span>
-              <span className="text-matrix">synced</span>
+              <button
+                type="button"
+                onClick={toggleGame}
+                className="inline-flex items-center gap-1 rounded-md border border-cyan-300/50 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-100"
+              >
+                {gameOn ? <Square className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                {gameOn ? "Exit" : "Play"}
+              </button>
             </div>
-            <p className="text-[11px] text-cyan-100">{profile.statusMessages[statusIndex]}</p>
+
+            {gameOn ? (
+              <div className="space-y-1 text-[11px] text-cyan-100">
+                <p>Click highlighted nodes in order.</p>
+                <p>
+                  Step: {Math.min(step + 1, sequence.length || ROUND_LENGTH)}/{sequence.length || ROUND_LENGTH} · Time: {timeLeft}s · Score: {score} · Best: {best}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-cyan-100">{profile.statusMessages[statusIndex]}</p>
+            )}
           </div>
         </motion.div>
       </div>
