@@ -1,3 +1,4 @@
+import { Certifications } from "@/components/Certifications";
 import { Hero } from "@/components/Hero";
 import { TelemetryBackground } from "@/components/effects/TelemetryBackground";
 import { AboutSection } from "@/components/sections/AboutSection";
@@ -21,6 +22,7 @@ export default function HomePage() {
         <SkillsSection />
         <EducationSection />
         <HighlightsSection />
+        <Certifications />
         <ContactSection />
       </main>
       <Footer />
